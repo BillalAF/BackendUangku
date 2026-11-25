@@ -39,21 +39,39 @@ export async function generateReply({ prompt, history = [], context = "" }) {
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
 
-  let response;
-  try {
-    response = await fetch(url, {
+  const baseBody = {
+    systemInstruction: { parts: [{ text: `${SYSTEM_PROMPT}\n\n${context}` }] },
+    contents,
+  };
+
+  // thinkingConfig HARUS berada di dalam generationConfig (bukan di level atas request)
+  const withThinking = {
+    ...baseBody,
+    generationConfig: { thinkingConfig: { thinkingLevel: THINKING_LEVEL } },
+  };
+
+  const callGemini = (body) =>
+    fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "x-goog-api-key": process.env.GEMINI_API_KEY,
       },
-      body: JSON.stringify({
-        system_instruction: { parts: [{ text: `${SYSTEM_PROMPT}\n\n${context}` }] },
-        contents,
-        thinking_config: { thinking_level: THINKING_LEVEL },
-      }),
+      body: JSON.stringify(body),
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
+
+  let response;
+  try {
+    response = await callGemini(withThinking);
+
+    // Jika model tidak mendukung thinkingLevel, ulangi tanpa pengaturan tersebut
+    if (response.status === 400) {
+      const detail = await response.clone().json().catch(() => ({}));
+      if (/thinking/i.test(detail?.error?.message || "")) {
+        response = await callGemini(baseBody);
+      }
+    }
   } catch (err) {
     throw new AiError("Gagal menghubungi layanan AI: " + err.message, "AI_UNREACHABLE", 502);
   }
